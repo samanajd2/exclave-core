@@ -116,14 +116,31 @@ func (i *Inbound) NewConnectionEx(ctx context.Context, conn net.Conn, source met
 	}
 }
 
+// lookupUser returns the authenticated user by the name stored in the auth context.
+func (i *Inbound) lookupUser(ctx context.Context) (*protocol.MemoryUser, error) {
+	name, ok := auth.UserFromContext[string](ctx)
+	if !ok {
+		return nil, newError("missing user in context")
+	}
+	i.Lock()
+	defer i.Unlock()
+	idx := slices.IndexFunc(i.users, func(u *User) bool {
+		return u.Email == name
+	})
+	if idx < 0 {
+		return nil, newError("user ", name, " does not exist.")
+	}
+	u := i.users[idx]
+	return &protocol.MemoryUser{Email: u.Email, Level: uint32(u.Level)}, nil
+}
+
 func (i *Inbound) handleTCP(ctx context.Context, conn net.Conn, source metadata.Socksaddr, destination metadata.Socksaddr) error {
 	inbound := session.InboundFromContext(ctx)
-	userInt, _ := auth.UserFromContext[int](ctx)
-	user := i.users[userInt]
-	inbound.User = &protocol.MemoryUser{
-		Email: user.Email,
-		Level: uint32(user.Level),
+	user, err := i.lookupUser(ctx)
+	if err != nil {
+		return err
 	}
+	inbound.User = user
 	ctx = log.ContextWithAccessMessage(ctx, &log.AccessMessage{
 		From:   source,
 		To:     destination,
@@ -141,12 +158,11 @@ func (i *Inbound) handleTCP(ctx context.Context, conn net.Conn, source metadata.
 
 func (i *Inbound) handleUDP(ctx context.Context, conn network.PacketConn, source metadata.Socksaddr, destination metadata.Socksaddr) error {
 	inbound := session.InboundFromContext(ctx)
-	idx, _ := auth.UserFromContext[int](ctx)
-	user := i.users[idx]
-	inbound.User = &protocol.MemoryUser{
-		Email: user.Email,
-		Level: uint32(user.Level),
+	user, err := i.lookupUser(ctx)
+	if err != nil {
+		return err
 	}
+	inbound.User = user
 	ctx = log.ContextWithAccessMessage(ctx, &log.AccessMessage{
 		From:   source,
 		To:     destination,
@@ -167,8 +183,6 @@ func (i *Inbound) AddUser(ctx context.Context, user *protocol.MemoryUser) error 
 	account := user.Account.(*MemoryAccount)
 	email := strings.ToLower(account.Email)
 	if len(email) == 0 {
-		u := uuid.New()
-		email = "unnamed-user-" + strconv.Itoa(len(i.users)) + "-" + u.String()
 		return newError("Email must not be empty.")
 	}
 	i.Lock()
