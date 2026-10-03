@@ -51,7 +51,7 @@ func NewClient(ctx context.Context, config *ClientConfig) (*Outbound, error) {
 			Network: net.Network_UDP,
 		},
 	}
-	uuid, err := uuid.ParseString(config.Uuid)
+	uuid, err := uuid.ParseHexDashString(config.Uuid)
 	if err != nil {
 		return nil, newError("invalid uuid")
 	}
@@ -138,6 +138,7 @@ func (o *Outbound) Process(ctx context.Context, link *transport.Link, dialer int
 			bytespool.Free(firstPayload)
 		}
 		if err != nil {
+			serverConn.Close()
 			return singbridge.ReturnError(err)
 		}
 
